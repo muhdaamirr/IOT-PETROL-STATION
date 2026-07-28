@@ -1,0 +1,82 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <MQTT.h>
+
+WiFiClient net;
+MQTTClient mqtt(1024);
+
+// WiFi & MQTT Credentials
+const char* ssid = "takdewifi_2.4Ghz";
+const char* wifiPassword = "12345678";
+const char* broker = "broker.hivemq.com"; 
+const int mqtt_port = 1883;
+const char* unique_id = "072a046f-81d8-4878-96b6-c3e7402ab58e";
+const char* mqtt_topic = "tankVolume"; // Clean topic name
+
+// Define the pins for Serial2 (Connecting to STM32)
+#define RXD2 16  // Connect STM32 TX (PA9) to ESP32 Pin 16
+#define TXD2 17  // Connect STM32 RX to ESP32 Pin 17
+
+void connectWiFi() {
+    Serial.print("Connecting WiFi");
+    WiFi.begin(ssid, wifiPassword);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\n[SYSTEM] WiFi Connected");
+}
+
+void setup_mqtt() {
+    Serial.print("Connecting to MQTT...");
+    while(!mqtt.connect(unique_id)) {
+        Serial.print(".");
+        delay(500);
+    }
+    Serial.println("\n[SYSTEM] MQTT connected.");
+}
+
+void setup() {
+    // Start main Serial for Laptop Debugging via USB
+    Serial.begin(115200); 
+    
+    // Start Serial2 to listen to the STM32
+    Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2); 
+
+    Serial.println("\n--- ESP32 PETROL STATION BRIDGE STARTING ---");
+
+    connectWiFi();
+    mqtt.begin(broker, 1883, net);
+    setup_mqtt();
+}
+
+void loop() {
+    mqtt.loop();
+    if (!mqtt.connected()) {
+        setup_mqtt();
+    }
+
+    // ===============================
+    // READ & VERIFY STM32 DATA
+    // ===============================
+    if (Serial2.available()) {
+        // Read the incoming string until the newline character
+        String msg = Serial2.readStringUntil('\n');
+        msg.trim(); // Remove any stray spaces or invisible characters
+
+        if (msg.length() > 0) {
+            // 1. VISUAL VERIFICATION (Print to laptop screen)
+            Serial.print("[DEBUG] Raw data from STM32: ");
+            Serial.println(msg);
+
+            // 2. LOGICAL VERIFICATION (Check the format)
+            // We know your valid data always starts with "P1="
+            if (msg.startsWith("P1=")) {
+                Serial.println("[SUCCESS] Data verified! Publishing to MQTT...\n");
+                mqtt.publish(mqtt_topic, msg);
+            } else {
+                Serial.println("[ERROR] Corrupted or invalid data received. Blocked from MQTT.\n");
+            }
+        }
+    }
+}
